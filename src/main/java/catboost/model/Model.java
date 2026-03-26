@@ -46,7 +46,7 @@ public class Model {
             TreeNode root = roots.get(i);
             result += root.compute(input);
         }
-        return result*scale + (startTree == 0 ? bias : 0.0);
+        return result*scale + bias;
     }
 
 }
