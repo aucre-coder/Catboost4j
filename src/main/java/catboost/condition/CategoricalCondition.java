@@ -60,7 +60,7 @@ abstract public class CategoricalCondition implements Condition {
 
 
     @Override
-    public boolean isLeft(Map<String, String> input) {
+    public boolean isRight(Map<String, String> input) {
         String hashValue = feature.getHash(input);
 
         CategoricalStats categoricalStats = stats.get(hashValue);

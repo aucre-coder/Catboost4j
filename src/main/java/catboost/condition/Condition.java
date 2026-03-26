@@ -7,6 +7,6 @@ import java.util.Map;
  */
 public interface Condition {
 
-    boolean isLeft(Map<String,String> input);
+    boolean isRight(Map<String,String> input);
 
 }

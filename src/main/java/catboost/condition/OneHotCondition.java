@@ -21,7 +21,7 @@ public class OneHotCondition implements Condition {
     }
 
     @Override
-    public boolean isLeft(Map<String, String> input) {
+    public boolean isRight(Map<String, String> input) {
         String featureValue = input.get(featureName);
         int hash = (int) HashCalculator.CalcCatFeatureHash(featureValue, hashes, hashNotPresent);
         if(hash == value){

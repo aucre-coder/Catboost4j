@@ -16,7 +16,7 @@ public class FloatCondition implements Condition {
     }
 
     @Override
-    public boolean isLeft(Map<String, String> input) {
+    public boolean isRight(Map<String, String> input) {
         double featureValue = Double.valueOf(input.get(featureName));
         if(featureValue > border ){
             return true;

@@ -38,6 +38,13 @@ public class Dataset {
         if (weights != null && weights.length != floatFeatures.length) {
             throw new IllegalArgumentException("weights length must match row count");
         }
+        if (weights != null) {
+            for (int i = 0; i < weights.length; i++) {
+                if (weights[i] <= 0.0) {
+                    throw new IllegalArgumentException("weights must be positive");
+                }
+            }
+        }
         if (featureSchema.size() != floatFeatures[0].length) {
             throw new IllegalArgumentException("feature count must match feature names");
         }

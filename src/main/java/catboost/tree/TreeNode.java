@@ -37,7 +37,7 @@ public class TreeNode {
         if(isLeaf){
             return leafValue;
         }
-        if(condition.isLeft(input)){
+        if(condition.isRight(input)){
             return right.compute(input);
         }else{
             return left.compute(input);
