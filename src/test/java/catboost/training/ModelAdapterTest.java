@@ -41,6 +41,26 @@ class ModelAdapterTest {
         assertEquals(42.0, model.predict(features(1.0, 2.0)), 1e-12);
     }
 
+    @Test
+    void excludesBiasFromInteriorTreeSlices() {
+        TrainingResult result = new TrainingResult(
+                Arrays.asList(
+                        new ObliviousTree(Collections.<ObliviousSplit>emptyList(), new double[]{10.0}),
+                        new ObliviousTree(Collections.<ObliviousSplit>emptyList(), new double[]{20.0})
+                ),
+                new FeatureSchema(Collections.singletonList("x1")),
+                new double[][]{{0.0}},
+                2.0,
+                Collections.singletonList(0.0)
+        );
+
+        Model model = new ModelAdapter().toModel(result);
+
+        assertEquals(32.0, model.predict(Collections.<String, String>emptyMap()), 1e-12);
+        assertEquals(12.0, model.predict(Collections.<String, String>emptyMap(), 0, 1), 1e-12);
+        assertEquals(20.0, model.predict(Collections.<String, String>emptyMap(), 1, 2), 1e-12);
+    }
+
     private Map<String, String> features(double x1, double x2) {
         Map<String, String> input = new HashMap<String, String>();
         input.put("x1", String.valueOf(x1));
