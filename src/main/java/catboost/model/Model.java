@@ -33,20 +33,4 @@ public class Model {
         return result*scale + bias;
     }
 
-    /**
-     * This method is used for to compute only subset of trees instead of all trees.
-     * @param input in this map key is the name of the feature as given while training the model and value is String.valueOf(valueOfFeature)
-     * @param startTree starting(including) index of the tree from where you want to compute the trees. Index start from 0
-     * @param endTree ending(excluding) index of the tree
-     * @return prediction of given model on given input
-     */
-    public double predict(Map<String, String> input, int startTree, int endTree){
-        double result = 0.0;
-        for(int i = startTree;i<endTree;i++){
-            TreeNode root = roots.get(i);
-            result += root.compute(input);
-        }
-        return result*scale + bias;
-    }
-
 }

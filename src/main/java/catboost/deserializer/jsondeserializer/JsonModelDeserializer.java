@@ -5,8 +5,8 @@ import catboost.condition.Condition;
 import catboost.features.Feature;
 import catboost.model.Model;
 import catboost.tree.TreeNode;
+import catboost.util.Pair;
 import com.google.gson.JsonObject;
-import javafx.util.Pair;
 
 import java.util.HashMap;
 import java.util.List;

@@ -1,8 +1,8 @@
 package catboost.deserializer.jsondeserializer;
 
+import catboost.util.Pair;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
-import javafx.util.Pair;
 
 
 /**

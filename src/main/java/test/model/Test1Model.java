@@ -4,7 +4,6 @@ import catboost.deserializer.jsondeserializer.JsonModelDeserializer;
 import catboost.model.Model;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
-import javafx.util.Pair;
 
 import java.io.*;
 import java.util.*;

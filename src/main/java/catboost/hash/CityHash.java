@@ -1,6 +1,6 @@
 package catboost.hash;
 
-import javafx.util.Pair;
+import catboost.util.Pair;
 
 import java.math.BigInteger;
 
