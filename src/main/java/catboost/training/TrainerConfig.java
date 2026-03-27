@@ -10,6 +10,7 @@ public class TrainerConfig {
     private int maxBins = 32;
     private double learningRate = 0.03;
     private double l2LeafReg = 3.0;
+    private long randomSeed = 0L;
 
     public int getIterations() {
         return iterations;
@@ -68,6 +69,15 @@ public class TrainerConfig {
             throw new IllegalArgumentException("l2LeafReg must be non-negative");
         }
         this.l2LeafReg = l2LeafReg;
+        return this;
+    }
+
+    public long getRandomSeed() {
+        return randomSeed;
+    }
+
+    public TrainerConfig setRandomSeed(long randomSeed) {
+        this.randomSeed = randomSeed;
         return this;
     }
 }

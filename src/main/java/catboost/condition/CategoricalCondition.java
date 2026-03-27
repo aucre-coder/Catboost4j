@@ -69,7 +69,12 @@ abstract public class CategoricalCondition implements Condition {
         }
         double denominator = getDenominator(categoricalStats), numenator = getNumerator(categoricalStats);
 
-        double nodeValue = ((numenator/denominator) + getShift()) * getScale();
+        double nodeValue;
+        if(denominator == 0.0){
+            nodeValue = getShift() * getScale();
+        } else {
+            nodeValue = ((numenator/denominator) + getShift()) * getScale();
+        }
 
         if(nodeValue > getBorder()){
             return true;

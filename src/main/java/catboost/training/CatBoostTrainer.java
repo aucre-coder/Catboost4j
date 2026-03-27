@@ -8,6 +8,7 @@ import catboost.training.quantization.Quantizer;
 import catboost.training.tree.ObliviousTreeBuilder;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 public class CatBoostTrainer {
@@ -48,29 +49,30 @@ public class CatBoostTrainer {
         double[] weights = dataset.getWeights();
 
         double bias = computeWeightedMean(targets, weights);
-        double[] predictions = new double[dataset.getRowCount()];
-        for (int i = 0; i < predictions.length; i++) {
-            predictions[i] = bias;
-        }
-
-        double[] gradients = new double[dataset.getRowCount()];
-        double[] hessians = new double[dataset.getRowCount()];
+        OrderedTrainingState trainingState = new OrderedTrainingState(dataset, bias, config.getRandomSeed());
         int[] rowLeafIndexes = new int[dataset.getRowCount()];
         List<ObliviousTree> trees = new ArrayList<ObliviousTree>();
         List<Double> losses = new ArrayList<Double>();
-        losses.add(lossFunction.computeLoss(predictions, targets, weights));
+        losses.add(trainingState.computeLoss(lossFunction));
 
         for (int iteration = 0; iteration < config.getIterations(); iteration++) {
-            lossFunction.computeGradients(predictions, targets, weights, gradients, hessians);
-            ObliviousTree tree = treeBuilder.build(quantizedDataset, gradients, hessians, config, rowLeafIndexes);
+            int selectedLearnFoldIndex = trainingState.beginIteration();
+            ObliviousTreeBuilder.TreeBuildResult buildResult = treeBuilder.buildOrdered(
+                    quantizedDataset,
+                    trainingState,
+                    selectedLearnFoldIndex,
+                    config,
+                    rowLeafIndexes
+            );
+            trainingState.finishIteration();
+            ObliviousTree tree = buildResult.getTree();
             trees.add(tree);
-            for (int row = 0; row < predictions.length; row++) {
-                predictions[row] += tree.getLeafValue(rowLeafIndexes[row]);
-            }
-            losses.add(lossFunction.computeLoss(predictions, targets, weights));
+            trainingState.applyTree(quantizedDataset, buildResult);
+            losses.add(trainingState.computeLoss(lossFunction));
         }
 
-        return new TrainingResult(trees, dataset.getFeatureSchema(), extractBorders(quantizedDataset), bias, losses);
+        CompactedModel compactedModel = compactModel(trees, quantizedDataset);
+        return new TrainingResult(compactedModel.trees, dataset.getFeatureSchema(), compactedModel.borders, bias, losses);
     }
 
     private double computeWeightedMean(double[] values, double[] weights) {
@@ -92,5 +94,63 @@ public class CatBoostTrainer {
             System.arraycopy(source, 0, borders[featureIndex], 0, source.length);
         }
         return borders;
+    }
+
+    private CompactedModel compactModel(List<ObliviousTree> trees, QuantizedDataset quantizedDataset) {
+        double[][] sourceBorders = extractBorders(quantizedDataset);
+        int featureCount = quantizedDataset.getFeatureCount();
+        boolean[][] usedBorders = new boolean[featureCount][];
+        for (int featureIndex = 0; featureIndex < featureCount; featureIndex++) {
+            usedBorders[featureIndex] = new boolean[sourceBorders[featureIndex].length];
+        }
+        for (ObliviousTree tree : trees) {
+            for (ObliviousSplit split : tree.getSplits()) {
+                usedBorders[split.getFeatureIndex()][split.getBorderIndex()] = true;
+            }
+        }
+
+        double[][] compactBorders = new double[featureCount][];
+        int[][] borderRemap = new int[featureCount][];
+        for (int featureIndex = 0; featureIndex < featureCount; featureIndex++) {
+            int[] remap = new int[sourceBorders[featureIndex].length];
+            Arrays.fill(remap, -1);
+            int usedCount = 0;
+            for (int borderIndex = 0; borderIndex < usedBorders[featureIndex].length; borderIndex++) {
+                if (usedBorders[featureIndex][borderIndex]) {
+                    remap[borderIndex] = usedCount++;
+                }
+            }
+
+            compactBorders[featureIndex] = new double[usedCount];
+            for (int borderIndex = 0; borderIndex < usedBorders[featureIndex].length; borderIndex++) {
+                if (usedBorders[featureIndex][borderIndex]) {
+                    compactBorders[featureIndex][remap[borderIndex]] = sourceBorders[featureIndex][borderIndex];
+                }
+            }
+            borderRemap[featureIndex] = remap;
+        }
+
+        List<ObliviousTree> compactTrees = new ArrayList<ObliviousTree>(trees.size());
+        for (ObliviousTree tree : trees) {
+            List<ObliviousSplit> compactSplits = new ArrayList<ObliviousSplit>(tree.getSplits().size());
+            for (ObliviousSplit split : tree.getSplits()) {
+                compactSplits.add(new ObliviousSplit(
+                        split.getFeatureIndex(),
+                        borderRemap[split.getFeatureIndex()][split.getBorderIndex()]
+                ));
+            }
+            compactTrees.add(new ObliviousTree(compactSplits, tree.getLeafValues()));
+        }
+        return new CompactedModel(compactTrees, compactBorders);
+    }
+
+    private static final class CompactedModel {
+        private final List<ObliviousTree> trees;
+        private final double[][] borders;
+
+        private CompactedModel(List<ObliviousTree> trees, double[][] borders) {
+            this.trees = trees;
+            this.borders = borders;
+        }
     }
 }

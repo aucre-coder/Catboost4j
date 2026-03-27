@@ -45,7 +45,7 @@ public class JsonModelDeserializer {
             featureNames.put(i, floatFeatureNames.get(i));
         }
         int j = 0;
-        for(;j<categoricalFeatureNames.size();i++){
+        for(;j<categoricalFeatureNames.size();j++){
             featureNames.put(i+j,categoricalFeatureNames.get(j));
         }
         return deserialize(jsonModel, featureNames);

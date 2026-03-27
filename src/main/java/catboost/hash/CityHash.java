@@ -17,9 +17,9 @@ public class CityHash {
 
     static Long unalignedLOAD64(String s){
         byte b[] = s.getBytes();
-        long k = (short)b[0];
+        long k = (b[0] & 0xFFL);
         for(int i = 1;i < 8;i++){
-            k = k + ((long)b[i] << (8*i));
+            k = k + ((b[i] & 0xFFL) << (8*i));
         }
 
         return k;
@@ -28,9 +28,9 @@ public class CityHash {
 
     static  Integer unalignedLOAD32(String s){
         byte b[] = s.getBytes();
-        int k = (short)b[0];
+        int k = (b[0] & 0xFF);
         for(int i = 1;i < 4;i++){
-            k = k + ((int)b[i] << (8*i));
+            k = k + ((b[i] & 0xFF) << (8*i));
         }
 
         return k;

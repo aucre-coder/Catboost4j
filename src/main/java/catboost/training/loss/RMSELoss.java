@@ -9,7 +9,7 @@ public class RMSELoss implements LossFunction {
                                  double[] hessians) {
         for (int i = 0; i < predictions.length; i++) {
             double weight = weights == null ? 1.0 : weights[i];
-            gradients[i] = (predictions[i] - targets[i]) * weight;
+            gradients[i] = (targets[i] - predictions[i]) * weight;
             hessians[i] = weight;
         }
     }

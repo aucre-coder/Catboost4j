@@ -34,15 +34,19 @@ public class CTRDataDeserializer {
                 hashStride = obj.get("hash_stride").getAsInt();
             }
             JsonArray jsonArray = obj.getAsJsonArray("hash_map");
+            int entryIndex = 0;
             for(int i = 0;i<jsonArray.size();i+=hashStride){
                 String hash = jsonArray.get(i).getAsString();
                 CategoricalStats categoricalStats = null;
                 if(hashStride == 3){
-                    categoricalStats = new CategoricalStats(jsonArray.get(i+1).getAsInt(), jsonArray.get(i+2).getAsInt(), i/3);
+                    categoricalStats = new CategoricalStats(jsonArray.get(i+1).getAsInt(), jsonArray.get(i+2).getAsInt(), entryIndex);
+                }else if(hashStride >= 2) {
+                    categoricalStats = new CategoricalStats(counterDenominator,jsonArray.get(i+1).getAsInt(), entryIndex);
                 }else {
-                    categoricalStats = new CategoricalStats(counterDenominator,jsonArray.get(i+1).getAsInt(),i/3 );
+                    categoricalStats = new CategoricalStats(counterDenominator, 0, entryIndex);
                 }
                 value.put(hash, categoricalStats);
+                entryIndex++;
             }
             map.put(key, value);
         }

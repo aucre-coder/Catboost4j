@@ -60,6 +60,7 @@ public class ConditionSerializer {
         }
         /*-----------------------------OneHotEncoding------------------------------------*/
         array = jsonObject.getAsJsonArray("categorical_features");
+        if(array == null || array.isJsonNull()) array = new JsonArray();
         for(int i = 0;i<array.size();i++){
             JsonObject jsonObject1 = array.get(i).getAsJsonObject();
             JsonArray borders = jsonObject1.getAsJsonArray("values");
@@ -85,6 +86,7 @@ public class ConditionSerializer {
 
         /*-----------------------------ctrs----------------------------------------------*/
         array = jsonObject.getAsJsonArray("ctrs");
+        if(array == null || array.isJsonNull()) array = new JsonArray();
         for(int i = 0;i<array.size();i++){
 
             JsonObject jsonObject1 = array.get(i).getAsJsonObject();

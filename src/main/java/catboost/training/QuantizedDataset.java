@@ -30,7 +30,10 @@ public class QuantizedDataset {
     }
 
     public short[] getBinsForFeature(int featureIndex) {
-        return bins[featureIndex];
+        short[] source = bins[featureIndex];
+        short[] copy = new short[source.length];
+        System.arraycopy(source, 0, copy, 0, source.length);
+        return copy;
     }
 
     public double[] getBorders(int featureIndex) {
