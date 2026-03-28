@@ -1,9 +1,11 @@
 package catboost.training.tree;
 
+import catboost.training.IterationContext;
 import catboost.training.ObliviousSplit;
 import catboost.training.ObliviousTree;
 import catboost.training.OrderedTrainingState;
 import catboost.training.QuantizedDataset;
+import catboost.training.TrainingDebugLog;
 import catboost.training.TrainerConfig;
 
 import java.util.ArrayList;
@@ -72,6 +74,7 @@ public class ObliviousTreeBuilder {
         }
 
         List<ObliviousSplit> splits = new ArrayList<ObliviousSplit>();
+        boolean[][] usedSplits = allocateUsedSplits(dataset);
         for (int level = 0; level < config.getDepth(); level++) {
             int leafCount = 1 << level;
             SplitCandidate bestCandidate = null;
@@ -80,18 +83,28 @@ public class ObliviousTreeBuilder {
                     continue;
                 }
                 Histogram histogram = histogramBuilder.build(dataset, featureIndex, leafCount, rowLeafIndexes, gradients, hessians);
-                SplitCandidate candidate = histogramBuilder.findBestSplit(featureIndex, histogram, config.getL2LeafReg());
+                SplitCandidate candidate = histogramBuilder.findBestSplit(featureIndex, histogram, usedSplits[featureIndex]);
                 if (candidate != null && (bestCandidate == null || candidate.getScore() > bestCandidate.getScore())) {
                     bestCandidate = candidate;
                 }
             }
 
             if (bestCandidate == null) {
+                TrainingDebugLog.log("iterationTree level=%d no candidate", level);
                 break;
             }
 
             applySplit(dataset, bestCandidate, rowLeafIndexes, level);
             splits.add(new ObliviousSplit(bestCandidate.getFeatureIndex(), bestCandidate.getBorderIndex()));
+            markUsed(bestCandidate, usedSplits);
+            TrainingDebugLog.log(
+                    "iterationTree level=%d choose feature=%d border=%d score=%.12f rowLeafIndexes=%s",
+                    level,
+                    bestCandidate.getFeatureIndex(),
+                    bestCandidate.getBorderIndex(),
+                    bestCandidate.getScore(),
+                    TrainingDebugLog.formatIntArray(rowLeafIndexes)
+            );
         }
 
         int leafCount = 1 << splits.size();
@@ -114,15 +127,17 @@ public class ObliviousTreeBuilder {
 
     public TreeBuildResult buildOrdered(QuantizedDataset dataset,
                                         OrderedTrainingState trainingState,
-                                        int selectedLearnFoldIndex,
+                                        IterationContext iterationContext,
                                         TrainerConfig config,
                                         int[] rowLeafIndexes) {
-        OrderedTrainingState.LearnFold selectedLearnFold = trainingState.getLearnFold(selectedLearnFoldIndex);
+        OrderedTrainingState.LearnFold selectedLearnFold = trainingState.getLearnFold(iterationContext.getSelectedLearnFoldIndex());
+        double[] bootstrapWeights = iterationContext.getBootstrapWeights();
         for (int row = 0; row < rowLeafIndexes.length; row++) {
             rowLeafIndexes[row] = 0;
         }
 
         List<ObliviousSplit> splits = new ArrayList<ObliviousSplit>();
+        boolean[][] usedSplits = allocateUsedSplits(dataset);
         for (int level = 0; level < config.getDepth(); level++) {
             int leafCount = 1 << level;
             SplitCandidate bestCandidate = null;
@@ -136,7 +151,11 @@ public class ObliviousTreeBuilder {
                         leafCount,
                         rowLeafIndexes,
                         selectedLearnFold,
-                        config
+                        bootstrapWeights,
+                        trainingState.getRandom(),
+                        iterationContext.getScoreStdDev(),
+                        config,
+                        usedSplits[featureIndex]
                 );
                 if (candidate != null && (bestCandidate == null || candidate.getScore() > bestCandidate.getScore())) {
                     bestCandidate = candidate;
@@ -149,11 +168,14 @@ public class ObliviousTreeBuilder {
 
             applySplit(dataset, bestCandidate, rowLeafIndexes, level);
             splits.add(new ObliviousSplit(bestCandidate.getFeatureIndex(), bestCandidate.getBorderIndex()));
+            markUsed(bestCandidate, usedSplits);
         }
 
         int leafCount = 1 << splits.size();
-        double[] averagingLeafValues = buildAveragingLeafValues(trainingState.getAveragingFold(), rowLeafIndexes, leafCount, config);
+        double[] averagingLeafValues = buildAveragingLeafValues(trainingState.getAveragingFold(), rowLeafIndexes, leafCount, bootstrapWeights, config);
         double[] trainingRowUpdates = buildRowUpdates(rowLeafIndexes, averagingLeafValues);
+        TrainingDebugLog.log("iterationTree finalRowLeafIndexes=%s", TrainingDebugLog.formatIntArray(rowLeafIndexes));
+        TrainingDebugLog.log("iterationTree averagingLeafValues=%s", TrainingDebugLog.formatDoubleArray(averagingLeafValues));
 
         double[][][] learnFoldBodyTailLeafValues = new double[trainingState.getLearnFoldCount()][][];
         for (int foldIndex = 0; foldIndex < trainingState.getLearnFoldCount(); foldIndex++) {
@@ -165,7 +187,14 @@ public class ObliviousTreeBuilder {
                         learnFold.getBodyTail(bodyTailIndex),
                         rowLeafIndexes,
                         leafCount,
+                        bootstrapWeights,
                         config
+                );
+                TrainingDebugLog.log(
+                        "iterationTree learnFold=%d bodyTail=%d leafValues=%s",
+                        foldIndex,
+                        bodyTailIndex,
+                        TrainingDebugLog.formatDoubleArray(learnFoldBodyTailLeafValues[foldIndex][bodyTailIndex])
                 );
             }
         }
@@ -176,6 +205,7 @@ public class ObliviousTreeBuilder {
     private double[] buildAveragingLeafValues(OrderedTrainingState.AveragingFold averagingFold,
                                               int[] rowLeafIndexes,
                                               int leafCount,
+                                              double[] bootstrapWeights,
                                               TrainerConfig config) {
         double[] leafGradientSums = new double[leafCount];
         double[] leafWeightSums = new double[leafCount];
@@ -184,12 +214,13 @@ public class ObliviousTreeBuilder {
         double[] weights = averagingFold.getWeights();
         for (int row = 0; row < rowLeafIndexes.length; row++) {
             double weight = weights == null ? 1.0 : weights[row];
+            weight *= bootstrapWeights[row];
             int leafIndex = rowLeafIndexes[row];
             leafGradientSums[leafIndex] += (targets[row] - predictions[row]) * weight;
             leafWeightSums[leafIndex] += weight;
         }
 
-        double totalWeight = sumWeights(weights, rowLeafIndexes.length);
+        double totalWeight = sumWeights(weights, bootstrapWeights, rowLeafIndexes.length);
         double scaledL2 = scaledL2Regularizer(config.getL2LeafReg(), totalWeight, rowLeafIndexes.length);
         double[] leafValues = new double[leafCount];
         for (int leafIndex = 0; leafIndex < leafCount; leafIndex++) {
@@ -203,6 +234,7 @@ public class ObliviousTreeBuilder {
                                                   OrderedTrainingState.BodyTail bodyTail,
                                                   int[] rowLeafIndexes,
                                                   int leafCount,
+                                                  double[] bootstrapWeights,
                                                   TrainerConfig config) {
         double[] leafGradientSums = new double[leafCount];
         double[] leafWeightSums = new double[leafCount];
@@ -210,15 +242,20 @@ public class ObliviousTreeBuilder {
         double[] orderedTargets = learnFold.getOrderedTargets();
         double[] orderedWeights = learnFold.getOrderedWeights();
         double[] approximations = bodyTail.getApproximations();
-
         for (int orderedIndex = 0; orderedIndex < bodyTail.getBodyFinish(); orderedIndex++) {
+            int row = orderedToOriginal[orderedIndex];
             double weight = orderedWeights == null ? 1.0 : orderedWeights[orderedIndex];
-            int leafIndex = rowLeafIndexes[orderedToOriginal[orderedIndex]];
+            weight *= bootstrapWeights[row];
+            int leafIndex = rowLeafIndexes[row];
             leafGradientSums[leafIndex] += (orderedTargets[orderedIndex] - approximations[orderedIndex]) * weight;
             leafWeightSums[leafIndex] += weight;
         }
 
-        double scaledL2 = scaledL2Regularizer(config.getL2LeafReg(), bodyTail.getBodySumWeight(), bodyTail.getBodyFinish());
+        double scaledL2 = scaledL2Regularizer(
+                config.getL2LeafReg(),
+                bodyTail.getBodySumWeight(),
+                bodyTail.getBodyFinish()
+        );
         double[] leafValues = new double[leafCount];
         for (int leafIndex = 0; leafIndex < leafCount; leafIndex++) {
             leafValues[leafIndex] = (config.getLearningRate() * leafGradientSums[leafIndex])
@@ -260,14 +297,30 @@ public class ObliviousTreeBuilder {
         return sum;
     }
 
-    private double sumWeights(double[] weights, int rowCount) {
+    private double sumWeights(double[] weights, double[] bootstrapWeights, int rowCount) {
         if (weights == null) {
-            return rowCount;
+            double sum = 0.0;
+            for (int row = 0; row < rowCount; row++) {
+                sum += bootstrapWeights[row];
+            }
+            return sum;
         }
         double sum = 0.0;
         for (int row = 0; row < weights.length; row++) {
-            sum += weights[row];
+            sum += weights[row] * bootstrapWeights[row];
         }
         return sum;
+    }
+
+    private boolean[][] allocateUsedSplits(QuantizedDataset dataset) {
+        boolean[][] usedSplits = new boolean[dataset.getFeatureCount()][];
+        for (int featureIndex = 0; featureIndex < dataset.getFeatureCount(); featureIndex++) {
+            usedSplits[featureIndex] = new boolean[dataset.getBorderCount(featureIndex)];
+        }
+        return usedSplits;
+    }
+
+    private void markUsed(SplitCandidate candidate, boolean[][] usedSplits) {
+        usedSplits[candidate.getFeatureIndex()][candidate.getBorderIndex()] = true;
     }
 }

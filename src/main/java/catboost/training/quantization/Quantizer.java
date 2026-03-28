@@ -9,6 +9,8 @@ import java.util.PriorityQueue;
 
 public class Quantizer {
 
+    private static final double LOG_EPS = 1e-8;
+
     public QuantizedDataset fit(Dataset dataset, TrainerConfig config) {
         int featureCount = dataset.getFeatureCount();
         int rowCount = dataset.getRowCount();
@@ -18,7 +20,7 @@ public class Quantizer {
         for (int featureIndex = 0; featureIndex < featureCount; featureIndex++) {
             double[] featureValues = new double[rowCount];
             for (int row = 0; row < rowCount; row++) {
-                featureValues[row] = dataset.getFeatureValue(row, featureIndex);
+                featureValues[row] = asCatBoostFloat(dataset.getFeatureValue(row, featureIndex));
                 if (!Double.isFinite(featureValues[row])) {
                     throw new IllegalArgumentException("all feature values must be finite");
                 }
@@ -42,10 +44,16 @@ public class Quantizer {
             return new double[0];
         }
 
-        PriorityQueue<GreedyBin> bins = new PriorityQueue<GreedyBin>();
-        bins.add(new GreedyBin(sorted, 0, sorted.length));
+        GroupedValues grouped = groupSortedValues(sorted);
+        if (grouped.uniqueValues.length <= 1) {
+            return new double[0];
+        }
+
+        maxBorders = Math.min(maxBorders, grouped.uniqueValues.length - 1);
+        PriorityQueue<WeightedBin> bins = new PriorityQueue<WeightedBin>();
+        bins.add(new WeightedBin(grouped.uniqueValues, grouped.cumulativeWeights, 0, grouped.uniqueValues.length));
         while (bins.size() <= maxBorders && bins.peek() != null && bins.peek().canSplit()) {
-            GreedyBin bestBin = bins.poll();
+            WeightedBin bestBin = bins.poll();
             bins.add(bestBin.splitLeft());
             bins.add(bestBin);
         }
@@ -53,7 +61,7 @@ public class Quantizer {
         double[] result = new double[bins.size() - 1];
         int index = 0;
         while (!bins.isEmpty()) {
-            GreedyBin bin = bins.poll();
+            WeightedBin bin = bins.poll();
             if (!bin.isFirst()) {
                 result[index++] = bin.leftBorder();
             }
@@ -73,58 +81,101 @@ public class Quantizer {
         return -(pos + 1);
     }
 
+    private static GroupedValues groupSortedValues(double[] sortedValues) {
+        double[] uniqueValues = new double[sortedValues.length];
+        double[] weights = new double[sortedValues.length];
+        int uniqueCount = 0;
+
+        for (int i = 0; i < sortedValues.length; i++) {
+            double value = sortedValues[i];
+            if (uniqueCount == 0 || Double.compare(uniqueValues[uniqueCount - 1], value) != 0) {
+                uniqueValues[uniqueCount] = value;
+                weights[uniqueCount] = 1.0;
+                uniqueCount++;
+            } else {
+                weights[uniqueCount - 1] += 1.0;
+            }
+        }
+
+        if (uniqueCount == 0) {
+            return new GroupedValues(new double[0], new double[0]);
+        }
+
+        double[] compactValues = Arrays.copyOf(uniqueValues, uniqueCount);
+        double[] cumulativeWeights = Arrays.copyOf(weights, uniqueCount);
+        double totalWeight = cumulativeWeights[0];
+        for (int i = 1; i < cumulativeWeights.length; i++) {
+            totalWeight += cumulativeWeights[i];
+            cumulativeWeights[i] += cumulativeWeights[i - 1];
+        }
+
+        double normalization = sortedValues.length / totalWeight;
+        for (int i = 0; i < cumulativeWeights.length; i++) {
+            cumulativeWeights[i] *= normalization;
+        }
+        return new GroupedValues(compactValues, cumulativeWeights);
+    }
+
+    private static double asCatBoostFloat(double value) {
+        return (double) ((float) value);
+    }
+
     private static double[] copy(double[] values) {
         double[] copy = new double[values.length];
         System.arraycopy(values, 0, copy, 0, values.length);
         return copy;
     }
 
-    private static final class GreedyBin implements Comparable<GreedyBin> {
-        private final double[] sortedValues;
+    private static final class GroupedValues {
+        private final double[] uniqueValues;
+        private final double[] cumulativeWeights;
+
+        private GroupedValues(double[] uniqueValues, double[] cumulativeWeights) {
+            this.uniqueValues = uniqueValues;
+            this.cumulativeWeights = cumulativeWeights;
+        }
+    }
+
+    private static final class WeightedBin implements Comparable<WeightedBin> {
+        private final double[] uniqueValues;
+        private final double[] cumulativeWeights;
         private int start;
         private final int end;
         private int bestSplit;
         private double bestScore;
 
-        GreedyBin(double[] sortedValues, int start, int end) {
-            this.sortedValues = sortedValues;
+        private WeightedBin(double[] uniqueValues, double[] cumulativeWeights, int start, int end) {
+            this.uniqueValues = uniqueValues;
+            this.cumulativeWeights = cumulativeWeights;
             this.start = start;
             this.end = end;
             updateBestSplit();
         }
 
-        boolean canSplit() {
+        private boolean canSplit() {
             return bestSplit > start && bestSplit < end;
         }
 
-        boolean isFirst() {
+        private boolean isFirst() {
             return start == 0;
         }
 
-        GreedyBin splitLeft() {
+        private WeightedBin splitLeft() {
             if (!canSplit()) {
                 throw new IllegalStateException("bin cannot be split");
             }
-            GreedyBin left = new GreedyBin(sortedValues, start, bestSplit);
+            WeightedBin left = new WeightedBin(uniqueValues, cumulativeWeights, start, bestSplit);
             start = bestSplit;
             updateBestSplit();
             return left;
         }
 
-        double leftBorder() {
-            return (sortedValues[start - 1] + sortedValues[start]) * 0.5;
+        private double leftBorder() {
+            return (uniqueValues[start - 1] * 0.5) + (uniqueValues[start] * 0.5);
         }
 
-        public int compareTo(GreedyBin other) {
-            int scoreComparison = Double.compare(other.bestScore, bestScore);
-            if (scoreComparison != 0) {
-                return scoreComparison;
-            }
-            int sizeComparison = Integer.compare(other.end - other.start, end - start);
-            if (sizeComparison != 0) {
-                return sizeComparison;
-            }
-            return Integer.compare(start, other.start);
+        public int compareTo(WeightedBin other) {
+            return Double.compare(other.bestScore, bestScore);
         }
 
         private void updateBestSplit() {
@@ -134,10 +185,13 @@ public class Quantizer {
                 return;
             }
 
-            int middle = start + ((end - start) / 2);
-            double middleValue = sortedValues[middle];
-            int lowerBound = lowerBound(sortedValues, start, middle, middleValue);
-            int upperBound = upperBound(sortedValues, middle, end, middleValue);
+            double leftBinsWeight = start == 0 ? 0.0 : cumulativeWeights[start - 1];
+            double midCumulativeWeight = 0.5 * (leftBinsWeight + cumulativeWeights[end - 1]);
+            int lowerBound = lowerBound(cumulativeWeights, start, end, midCumulativeWeight);
+            if (lowerBound >= end) {
+                lowerBound = end - 1;
+            }
+            int upperBound = lowerBound + 1;
 
             double leftScore = splitScore(lowerBound);
             double rightScore = splitScore(upperBound);
@@ -149,7 +203,12 @@ public class Quantizer {
             if (splitPosition <= start || splitPosition >= end) {
                 return Double.NEGATIVE_INFINITY;
             }
-            return Math.log(splitPosition - start) + Math.log(end - splitPosition) - Math.log(end - start);
+            double leftBinsWeight = start == 0 ? 0.0 : cumulativeWeights[start - 1];
+            double leftPartWeight = cumulativeWeights[splitPosition - 1] - leftBinsWeight;
+            double rightPartWeight = cumulativeWeights[end - 1] - cumulativeWeights[splitPosition - 1];
+            return Math.log(leftPartWeight + LOG_EPS)
+                    + Math.log(rightPartWeight + LOG_EPS)
+                    - Math.log(leftPartWeight + rightPartWeight + LOG_EPS);
         }
 
         private static int lowerBound(double[] values, int from, int to, double target) {
@@ -158,20 +217,6 @@ public class Quantizer {
             while (left < right) {
                 int middle = left + ((right - left) / 2);
                 if (values[middle] < target) {
-                    left = middle + 1;
-                } else {
-                    right = middle;
-                }
-            }
-            return left;
-        }
-
-        private static int upperBound(double[] values, int from, int to, double target) {
-            int left = from;
-            int right = to;
-            while (left < right) {
-                int middle = left + ((right - left) / 2);
-                if (values[middle] <= target) {
                     left = middle + 1;
                 } else {
                     right = middle;

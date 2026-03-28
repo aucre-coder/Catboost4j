@@ -58,4 +58,46 @@ class QuantizerTest {
         assertArrayEquals(new short[]{0, 0, 0, 1, 1, 2, 2}, quantized.getBinsForFeature(0));
     }
 
+    @Test
+    void matchesCatBoostWeightedUniqueGreedyLogSumCase() {
+        Dataset dataset = Dataset.of(
+                new double[][]{
+                        {6.0},
+                        {2.0},
+                        {7.0},
+                        {3.0},
+                        {7.0},
+                        {0.0},
+                        {3.0},
+                        {7.0},
+                        {5.0}
+                },
+                new double[]{0, 1, 2, 3, 4, 5, 6, 7, 8},
+                Arrays.asList("x")
+        );
+
+        QuantizedDataset quantized = new Quantizer().fit(dataset, new TrainerConfig().setMaxBins(5));
+
+        assertArrayEquals(new double[]{2.5, 4.0, 5.5, 6.5}, quantized.getBorders(0), 1e-12);
+        assertArrayEquals(new short[]{3, 0, 4, 1, 4, 0, 1, 4, 2}, quantized.getBinsForFeature(0));
+    }
+
+    @Test
+    void collapsesValuesThatBecomeEqualAfterCatBoostFloatCasting() {
+        Dataset dataset = Dataset.of(
+                new double[][]{
+                        {16777216.2},
+                        {16777216.4},
+                        {16777218.0}
+                },
+                new double[]{0.0, 1.0, 2.0},
+                Arrays.asList("x")
+        );
+
+        QuantizedDataset quantized = new Quantizer().fit(dataset, new TrainerConfig().setMaxBins(4));
+
+        assertArrayEquals(new double[]{16777217.0}, quantized.getBorders(0), 1e-12);
+        assertArrayEquals(new short[]{0, 0, 1}, quantized.getBinsForFeature(0));
+    }
+
 }

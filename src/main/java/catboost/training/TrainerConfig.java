@@ -1,15 +1,20 @@
 package catboost.training;
 
 /**
- * Training configuration for the first-cut float-only regression trainer.
+ * Training configuration for the native Java CatBoost parity subset:
+ * CPU, RMSE, ordered boosting, symmetric trees, float features only.
  */
 public class TrainerConfig {
 
     private int iterations = 100;
     private int depth = 6;
-    private int maxBins = 32;
+    private int maxBins = 255;
     private double learningRate = 0.03;
     private double l2LeafReg = 3.0;
+    private double randomStrength = 1.0;
+    private BootstrapType bootstrapType = BootstrapType.BAYESIAN;
+    private double baggingTemperature = 1.0;
+    private double subsample = 0.66;
     private long randomSeed = 0L;
 
     public int getIterations() {
@@ -72,6 +77,54 @@ public class TrainerConfig {
         return this;
     }
 
+    public double getRandomStrength() {
+        return randomStrength;
+    }
+
+    public TrainerConfig setRandomStrength(double randomStrength) {
+        if (randomStrength < 0.0) {
+            throw new IllegalArgumentException("randomStrength must be non-negative");
+        }
+        this.randomStrength = randomStrength;
+        return this;
+    }
+
+    public BootstrapType getBootstrapType() {
+        return bootstrapType;
+    }
+
+    public TrainerConfig setBootstrapType(BootstrapType bootstrapType) {
+        if (bootstrapType == null) {
+            throw new IllegalArgumentException("bootstrapType must not be null");
+        }
+        this.bootstrapType = bootstrapType;
+        return this;
+    }
+
+    public double getBaggingTemperature() {
+        return baggingTemperature;
+    }
+
+    public TrainerConfig setBaggingTemperature(double baggingTemperature) {
+        if (baggingTemperature < 0.0) {
+            throw new IllegalArgumentException("baggingTemperature must be non-negative");
+        }
+        this.baggingTemperature = baggingTemperature;
+        return this;
+    }
+
+    public double getSubsample() {
+        return subsample;
+    }
+
+    public TrainerConfig setSubsample(double subsample) {
+        if (!(subsample > 0.0 && subsample <= 1.0)) {
+            throw new IllegalArgumentException("subsample must be in range (0, 1]");
+        }
+        this.subsample = subsample;
+        return this;
+    }
+
     public long getRandomSeed() {
         return randomSeed;
     }
@@ -79,5 +132,13 @@ public class TrainerConfig {
     public TrainerConfig setRandomSeed(long randomSeed) {
         this.randomSeed = randomSeed;
         return this;
+    }
+
+    void validateForParityScope() {
+        if (bootstrapType == BootstrapType.BERNOULLI) {
+            throw new IllegalArgumentException(
+                    "bootstrap_type=Bernoulli is not supported in the strict native-Java CatBoost parity scope"
+            );
+        }
     }
 }

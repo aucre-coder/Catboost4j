@@ -44,31 +44,56 @@ public class CatBoostTrainer {
     }
 
     public TrainingResult fitResult(Dataset dataset) {
+        config.validateForParityScope();
         QuantizedDataset quantizedDataset = quantizer.fit(dataset, config);
         double[] targets = dataset.getTargets();
         double[] weights = dataset.getWeights();
 
         double bias = computeWeightedMean(targets, weights);
         OrderedTrainingState trainingState = new OrderedTrainingState(dataset, bias, config.getRandomSeed());
+        TrainingDebugLog.log("fit start rows=%d features=%d bias=%.12f seed=%d", dataset.getRowCount(), dataset.getFeatureSchema().size(), bias, config.getRandomSeed());
+        for (int featureIndex = 0; featureIndex < quantizedDataset.getFeatureCount(); featureIndex++) {
+            TrainingDebugLog.log(
+                    "feature=%d borders=%s",
+                    featureIndex,
+                    TrainingDebugLog.formatDoubleArray(quantizedDataset.getBorders(featureIndex))
+            );
+        }
         int[] rowLeafIndexes = new int[dataset.getRowCount()];
         List<ObliviousTree> trees = new ArrayList<ObliviousTree>();
         List<Double> losses = new ArrayList<Double>();
         losses.add(trainingState.computeLoss(lossFunction));
+        TrainingDebugLog.log("initial loss=%.12f", losses.get(0));
 
         for (int iteration = 0; iteration < config.getIterations(); iteration++) {
-            int selectedLearnFoldIndex = trainingState.beginIteration();
+            IterationContext iterationContext = trainingState.beginIteration(config);
+            TrainingDebugLog.log(
+                    "iteration=%d selectedFold=%d scoreStdDev=%.12f bootstrap=%s",
+                    iteration,
+                    iterationContext.getSelectedLearnFoldIndex(),
+                    iterationContext.getScoreStdDev(),
+                    TrainingDebugLog.formatDoubleArray(iterationContext.getBootstrapWeights())
+            );
             ObliviousTreeBuilder.TreeBuildResult buildResult = treeBuilder.buildOrdered(
                     quantizedDataset,
                     trainingState,
-                    selectedLearnFoldIndex,
+                    iterationContext,
                     config,
                     rowLeafIndexes
             );
+            trainingState.getRandom().advance(1);
             trainingState.finishIteration();
             ObliviousTree tree = buildResult.getTree();
             trees.add(tree);
             trainingState.applyTree(quantizedDataset, buildResult);
             losses.add(trainingState.computeLoss(lossFunction));
+            TrainingDebugLog.log(
+                    "iteration=%d treeSplits=%s leafValues=%s loss=%.12f",
+                    iteration,
+                    TrainingDebugLog.formatSplits(tree.getSplits()),
+                    TrainingDebugLog.formatDoubleArray(tree.getLeafValues()),
+                    losses.get(losses.size() - 1)
+            );
         }
 
         CompactedModel compactedModel = compactModel(trees, quantizedDataset);

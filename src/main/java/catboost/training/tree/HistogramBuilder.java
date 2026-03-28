@@ -1,7 +1,9 @@
 package catboost.training.tree;
 
+import catboost.training.CatBoostRandom;
 import catboost.training.OrderedTrainingState;
 import catboost.training.QuantizedDataset;
+import catboost.training.TrainingDebugLog;
 import catboost.training.TrainerConfig;
 
 public class HistogramBuilder {
@@ -80,6 +82,12 @@ public class HistogramBuilder {
     }
 
     public SplitCandidate findBestSplit(int featureIndex, Histogram histogram, double l2LeafReg) {
+        return findBestSplit(featureIndex, histogram, null);
+    }
+
+    public SplitCandidate findBestSplit(int featureIndex,
+                                        Histogram histogram,
+                                        boolean[] usedBorders) {
         double[] splitScores = histogram.getSplitScores();
         if (splitScores.length == 0) {
             return null;
@@ -88,6 +96,9 @@ public class HistogramBuilder {
         double bestScore = Double.NEGATIVE_INFINITY;
         int bestBorderIndex = -1;
         for (int borderIndex = 0; borderIndex < splitScores.length; borderIndex++) {
+            if (usedBorders != null && usedBorders[borderIndex]) {
+                continue;
+            }
             double score = splitScores[borderIndex];
             if (score > bestScore) {
                 bestScore = score;
@@ -106,7 +117,34 @@ public class HistogramBuilder {
                                                int leafCount,
                                                int[] rowLeafIndexes,
                                                OrderedTrainingState.LearnFold learnFold,
+                                               double[] bootstrapWeights,
+                                               CatBoostRandom random,
+                                               double scoreStdDev,
                                                TrainerConfig config) {
+        return findBestOrderedSplit(
+                dataset,
+                featureIndex,
+                leafCount,
+                rowLeafIndexes,
+                learnFold,
+                bootstrapWeights,
+                random,
+                scoreStdDev,
+                config,
+                null
+        );
+    }
+
+    public SplitCandidate findBestOrderedSplit(QuantizedDataset dataset,
+                                               int featureIndex,
+                                               int leafCount,
+                                               int[] rowLeafIndexes,
+                                               OrderedTrainingState.LearnFold learnFold,
+                                               double[] bootstrapWeights,
+                                               CatBoostRandom random,
+                                               double scoreStdDev,
+                                               TrainerConfig config,
+                                               boolean[] usedBorders) {
         int borderCount = dataset.getBorderCount(featureIndex);
         if (borderCount == 0) {
             return null;
@@ -116,7 +154,23 @@ public class HistogramBuilder {
         double bestScore = Double.NEGATIVE_INFINITY;
         int bestBorderIndex = -1;
         for (int borderIndex = 0; borderIndex < borderCount; borderIndex++) {
-            double score = scoreOrderedSplit(bins, borderIndex, leafCount, rowLeafIndexes, learnFold, config);
+            if (usedBorders != null && usedBorders[borderIndex]) {
+                TrainingDebugLog.log("orderedScore feature=%d border=%d skipped=used", featureIndex, borderIndex);
+                continue;
+            }
+            double score = scoreOrderedSplit(
+                    bins,
+                    borderIndex,
+                    leafCount,
+                    rowLeafIndexes,
+                    learnFold,
+                    bootstrapWeights,
+                    config
+            );
+            if (scoreStdDev > 0.0) {
+                score += random.nextGaussian() * scoreStdDev;
+            }
+            TrainingDebugLog.log("orderedScore feature=%d border=%d score=%.12f", featureIndex, borderIndex, score);
             if (score > bestScore) {
                 bestScore = score;
                 bestBorderIndex = borderIndex;
@@ -124,23 +178,25 @@ public class HistogramBuilder {
         }
 
         if (bestBorderIndex < 0 || !(bestScore > 0.0)) {
+            TrainingDebugLog.log("orderedScore feature=%d bestCandidate=none bestScore=%.12f", featureIndex, bestScore);
             return null;
         }
+        TrainingDebugLog.log("orderedScore feature=%d bestBorder=%d bestScore=%.12f", featureIndex, bestBorderIndex, bestScore);
         return new SplitCandidate(featureIndex, bestBorderIndex, bestScore);
     }
 
-    private double scoreOrderedSplit(short[] bins,
-                                     int borderIndex,
-                                     int leafCount,
-                                     int[] rowLeafIndexes,
-                                     OrderedTrainingState.LearnFold learnFold,
-                                     TrainerConfig config) {
+    double scoreOrderedSplit(short[] bins,
+                             int borderIndex,
+                             int leafCount,
+                             int[] rowLeafIndexes,
+                             OrderedTrainingState.LearnFold learnFold,
+                             double[] bootstrapWeights,
+                             TrainerConfig config) {
         double numerator = 0.0;
         double denominator = 1e-100;
         int[] orderedToOriginal = learnFold.getOrderedToOriginal();
         double[] orderedTargets = learnFold.getOrderedTargets();
         double[] orderedWeights = learnFold.getOrderedWeights();
-
         for (int bodyTailIndex = 0; bodyTailIndex < learnFold.getBodyTailCount(); bodyTailIndex++) {
             OrderedTrainingState.BodyTail bodyTail = learnFold.getBodyTail(bodyTailIndex);
             if (bodyTail.getTailFinish() <= bodyTail.getBodyFinish()) {
@@ -165,6 +221,7 @@ public class HistogramBuilder {
                         orderedToOriginal,
                         orderedTargets,
                         orderedWeights,
+                        bootstrapWeights,
                         approximations,
                         orderedIndex,
                         leftBodyGradients,
@@ -181,6 +238,7 @@ public class HistogramBuilder {
                         orderedToOriginal,
                         orderedTargets,
                         orderedWeights,
+                        bootstrapWeights,
                         approximations,
                         orderedIndex,
                         leftTailGradients,
@@ -209,6 +267,7 @@ public class HistogramBuilder {
                                       int[] orderedToOriginal,
                                       double[] orderedTargets,
                                       double[] orderedWeights,
+                                      double[] bootstrapWeights,
                                       double[] approximations,
                                       int orderedIndex,
                                       double[] leftGradients,
@@ -218,6 +277,7 @@ public class HistogramBuilder {
         int row = orderedToOriginal[orderedIndex];
         int leafIndex = rowLeafIndexes[row];
         double weight = orderedWeights == null ? 1.0 : orderedWeights[orderedIndex];
+        weight *= bootstrapWeights[row];
         double gradient = (orderedTargets[orderedIndex] - approximations[orderedIndex]) * weight;
         if (bins[row] <= borderIndex) {
             leftGradients[leafIndex] += gradient;
