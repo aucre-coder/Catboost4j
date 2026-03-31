@@ -26,11 +26,7 @@ public class Model {
      * @return prediction of given model on given input
      */
     public double predict(Map<String, String> input){
-        double result = 0.0;
-        for(TreeNode root : roots){
-            result += root.compute(input);
-        }
-        return result*scale + bias;
+        return rawPredict(input, 0, roots.size());
     }
 
     /**
@@ -41,12 +37,62 @@ public class Model {
      * @return prediction of given model on given input
      */
     public double predict(Map<String, String> input, int startTree, int endTree){
+        return rawPredict(input, startTree, endTree);
+    }
+
+    /**
+     * Returns a probability by clamping the raw model output into the [0, 1] range.
+     * Use this when the model was trained as a regression over binary targets such as no=0 and yes=1.
+     */
+    public double predictBoundedProbability(Map<String, String> input) {
+        return clampProbability(predict(input));
+    }
+
+    /**
+     * Returns a probability by clamping the raw subset prediction into the [0, 1] range.
+     * Use this when the model was trained as a regression over binary targets such as no=0 and yes=1.
+     */
+    public double predictBoundedProbability(Map<String, String> input, int startTree, int endTree) {
+        return clampProbability(predict(input, startTree, endTree));
+    }
+
+    /**
+     * Returns a probability by applying the sigmoid transform to the raw model output.
+     * Use this for binary classification models whose raw prediction is a logit.
+     */
+    public double predictSigmoidProbability(Map<String, String> input) {
+        return sigmoid(predict(input));
+    }
+
+    /**
+     * Returns a probability by applying the sigmoid transform to the raw subset prediction.
+     * Use this for binary classification models whose raw prediction is a logit.
+     */
+    public double predictSigmoidProbability(Map<String, String> input, int startTree, int endTree) {
+        return sigmoid(predict(input, startTree, endTree));
+    }
+
+    private double rawPredict(Map<String, String> input, int startTree, int endTree) {
         double result = 0.0;
         for(int i = startTree;i<endTree;i++){
             TreeNode root = roots.get(i);
             result += root.compute(input);
         }
         return result*scale + bias;
+    }
+
+    private double clampProbability(double value) {
+        if (value < 0.0) {
+            return 0.0;
+        }
+        if (value > 1.0) {
+            return 1.0;
+        }
+        return value;
+    }
+
+    private double sigmoid(double value) {
+        return 1.0 / (1.0 + Math.exp(-value));
     }
 
 }

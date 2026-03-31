@@ -33,6 +33,17 @@ TrainerConfig config = new TrainerConfig()
 Model model = new CatBoostTrainer(config).fit(dataset);
 ```
 
+For binary yes/no targets with the current RMSE trainer, encode `no=0.0` and `yes=1.0`.
+Then read the prediction directly as a bounded probability:
+
+```java
+double probability = model.predictBoundedProbability(input);
+double percent = probability * 100.0;
+```
+
+Do not apply a sigmoid to RMSE-trained `0..1` targets, otherwise predictions will be pushed into the `50%..100%` range.
+Use `predictSigmoidProbability(...)` only for binary classification models whose raw output is a logit.
+
 Non-goals of this first training cut:
 
 - categorical feature training

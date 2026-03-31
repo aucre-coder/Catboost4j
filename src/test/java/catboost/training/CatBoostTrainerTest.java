@@ -115,6 +115,36 @@ class CatBoostTrainerTest {
     }
 
     @Test
+    void binaryRegressionPredictionsCrossFiftyPercentWhenReadDirectly() {
+        Dataset dataset = Dataset.of(
+                new double[][]{
+                        {0.0},
+                        {0.0},
+                        {1.0},
+                        {1.0}
+                },
+                new double[]{0.0, 0.0, 1.0, 1.0},
+                Arrays.asList("x1")
+        );
+        TrainerConfig config = new TrainerConfig()
+                .setIterations(20)
+                .setDepth(1)
+                .setLearningRate(0.5)
+                .setMaxBins(2)
+                .setL2LeafReg(1.0)
+                .setBootstrapType(BootstrapType.NO)
+                .setRandomStrength(0.0)
+                .setRandomSeed(0L);
+
+        Model model = new CatBoostTrainer(config).fit(dataset);
+
+        assertTrue(model.predict(feature("x1", 0.0)) < 0.5);
+        assertTrue(model.predict(feature("x1", 1.0)) > 0.5);
+        assertTrue(model.predictBoundedProbability(feature("x1", 0.0)) < 0.5);
+        assertTrue(model.predictBoundedProbability(feature("x1", 1.0)) > 0.5);
+    }
+
+    @Test
     void matchesCatBoostOrderedMultiIterationParityCase() {
         Dataset dataset = Dataset.of(
                 new double[][]{
