@@ -7,6 +7,7 @@ import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class QuantizerTest {
@@ -98,6 +99,49 @@ class QuantizerTest {
 
         assertArrayEquals(new double[]{16777217.0}, quantized.getBorders(0), 1e-12);
         assertArrayEquals(new short[]{0, 0, 1}, quantized.getBinsForFeature(0));
+    }
+
+    @Test
+    void quantizesWithProvidedBordersWithoutMutatingThem() {
+        Dataset dataset = Dataset.of(
+                new double[][]{
+                        {0.0, 10.0},
+                        {2.0, 20.0},
+                        {4.0, 30.0}
+                },
+                new double[]{0.0, 1.0, 2.0},
+                Arrays.asList("x1", "x2")
+        );
+        double[][] borders = new double[][]{
+                {1.0, 3.0},
+                {15.0, 25.0}
+        };
+
+        QuantizedDataset quantized = new Quantizer().quantizeWithBorders(dataset, borders);
+
+        assertArrayEquals(new double[]{1.0, 3.0}, borders[0], 0.0);
+        assertArrayEquals(new double[]{15.0, 25.0}, borders[1], 0.0);
+        assertArrayEquals(new short[]{0, 1, 2}, quantized.getBinsForFeature(0));
+        assertArrayEquals(new short[]{0, 1, 2}, quantized.getBinsForFeature(1));
+    }
+
+    @Test
+    void rejectsQuantizeWithBordersWhenFeatureCountsDiffer() {
+        Dataset dataset = Dataset.of(
+                new double[][]{
+                        {0.0},
+                        {1.0}
+                },
+                new double[]{0.0, 1.0},
+                Arrays.asList("x1")
+        );
+
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> new Quantizer().quantizeWithBorders(dataset, new double[][]{{0.5}, {1.5}})
+        );
+
+        assertTrue(error.getMessage().contains("base borders feature count must match dataset feature count"));
     }
 
 }

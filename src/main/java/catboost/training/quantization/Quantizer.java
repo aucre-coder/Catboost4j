@@ -36,6 +36,29 @@ public class Quantizer {
         return new QuantizedDataset(bins, borders, dataset.getFeatureSchema(), rowCount);
     }
 
+    public QuantizedDataset quantizeWithBorders(Dataset dataset, double[][] borders) {
+        int featureCount = dataset.getFeatureCount();
+        if (borders.length != featureCount) {
+            throw new IllegalArgumentException("base borders feature count must match dataset feature count");
+        }
+
+        int rowCount = dataset.getRowCount();
+        short[][] bins = new short[featureCount][rowCount];
+        double[][] copiedBorders = new double[featureCount][];
+        for (int featureIndex = 0; featureIndex < featureCount; featureIndex++) {
+            double[] featureBorders = copy(borders[featureIndex]);
+            copiedBorders[featureIndex] = featureBorders;
+            for (int row = 0; row < rowCount; row++) {
+                double value = asCatBoostFloat(dataset.getFeatureValue(row, featureIndex));
+                if (!Double.isFinite(value)) {
+                    throw new IllegalArgumentException("all feature values must be finite");
+                }
+                bins[featureIndex][row] = (short) locateBin(value, featureBorders);
+            }
+        }
+        return new QuantizedDataset(bins, copiedBorders, dataset.getFeatureSchema(), rowCount);
+    }
+
     static double[] buildBorders(double[] values, int maxBins) {
         double[] sorted = copy(values);
         Arrays.sort(sorted);
