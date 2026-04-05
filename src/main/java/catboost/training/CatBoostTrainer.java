@@ -43,64 +43,13 @@ public class CatBoostTrainer {
         return modelAdapter.toModel(fitResult(dataset));
     }
 
-    public Model fit(Dataset dataset, TrainingResult baseResult) {
-        if (baseResult == null) {
-            return fit(dataset);
-        }
-        return modelAdapter.toModel(fitResult(dataset, baseResult));
-    }
-
     public TrainingResult fitResult(Dataset dataset) {
-        return fitResult(dataset, null);
-    }
-
-    public TrainingResult fitResult(Dataset dataset, TrainingResult baseResult) {
         config.validateForParityScope();
-        if (baseResult == null) {
-            return fitCold(dataset);
-        }
-        return fitWarm(dataset, baseResult);
-    }
-
-    private TrainingResult fitCold(Dataset dataset) {
         QuantizedDataset quantizedDataset = quantizer.fit(dataset, config);
         double[] targets = dataset.getTargets();
         double[] weights = dataset.getWeights();
         double bias = computeWeightedMean(targets, weights);
         OrderedTrainingState trainingState = new OrderedTrainingState(dataset, bias, config.getRandomSeed());
-        TrainingRunResult trainingRun = train(dataset, quantizedDataset, trainingState, bias);
-        CompactedModel compactedModel = compactModel(trainingRun.trees, quantizedDataset);
-        return new TrainingResult(compactedModel.trees, dataset.getFeatureSchema(), compactedModel.borders, bias, trainingRun.losses);
-    }
-
-    private TrainingResult fitWarm(Dataset dataset, TrainingResult baseResult) {
-        validateWarmStartCompatibility(dataset, baseResult);
-        double[][] baseBorders = baseResult.getBorders();
-        QuantizedDataset quantizedDataset = quantizer.quantizeWithBorders(dataset, baseBorders);
-        double[] initialPredictions = TrainingResultScorer.score(baseResult, dataset);
-        OrderedTrainingState trainingState = new OrderedTrainingState(
-                dataset,
-                baseResult.getBias(),
-                config.getRandomSeed(),
-                initialPredictions
-        );
-        TrainingRunResult trainingRun = train(dataset, quantizedDataset, trainingState, baseResult.getBias());
-        List<ObliviousTree> mergedTrees = new ArrayList<ObliviousTree>(baseResult.getTrees().size() + trainingRun.trees.size());
-        mergedTrees.addAll(baseResult.getTrees());
-        mergedTrees.addAll(trainingRun.trees);
-        return new TrainingResult(
-                mergedTrees,
-                baseResult.getFeatureSchema(),
-                baseBorders,
-                baseResult.getBias(),
-                trainingRun.losses
-        );
-    }
-
-    private TrainingRunResult train(Dataset dataset,
-                                    QuantizedDataset quantizedDataset,
-                                    OrderedTrainingState trainingState,
-                                    double bias) {
         TrainingDebugLog.log("fit start rows=%d features=%d bias=%.12f seed=%d", dataset.getRowCount(), dataset.getFeatureSchema().size(), bias, config.getRandomSeed());
         for (int featureIndex = 0; featureIndex < quantizedDataset.getFeatureCount(); featureIndex++) {
             TrainingDebugLog.log(
@@ -145,7 +94,9 @@ public class CatBoostTrainer {
                     losses.get(losses.size() - 1)
             );
         }
-        return new TrainingRunResult(trees, losses);
+
+        CompactedModel compactedModel = compactModel(trees, quantizedDataset);
+        return new TrainingResult(compactedModel.trees, dataset.getFeatureSchema(), compactedModel.borders, bias, losses);
     }
 
     private double computeWeightedMean(double[] values, double[] weights) {
@@ -217,28 +168,6 @@ public class CatBoostTrainer {
         return new CompactedModel(compactTrees, compactBorders);
     }
 
-    private void validateWarmStartCompatibility(Dataset dataset, TrainingResult baseResult) {
-        if (dataset.getRowCount() == 0) {
-            throw new IllegalArgumentException("warm-start dataset must contain at least one row");
-        }
-        if (dataset.getFeatureCount() != baseResult.getFeatureSchema().size()) {
-            throw new IllegalArgumentException("warm-start feature count must match base result feature count");
-        }
-        for (int featureIndex = 0; featureIndex < dataset.getFeatureCount(); featureIndex++) {
-            String expected = baseResult.getFeatureSchema().getFeatureName(featureIndex);
-            String actual = dataset.getFeatureSchema().getFeatureName(featureIndex);
-            if (!expected.equals(actual)) {
-                throw new IllegalArgumentException(
-                        "warm-start feature name mismatch at index " + featureIndex + ": expected " + expected + " but was " + actual
-                );
-            }
-        }
-        double[][] borders = baseResult.getBorders();
-        if (borders.length != dataset.getFeatureCount()) {
-            throw new IllegalArgumentException("base borders feature count must match dataset feature count");
-        }
-    }
-
     private static final class CompactedModel {
         private final List<ObliviousTree> trees;
         private final double[][] borders;
@@ -246,16 +175,6 @@ public class CatBoostTrainer {
         private CompactedModel(List<ObliviousTree> trees, double[][] borders) {
             this.trees = trees;
             this.borders = borders;
-        }
-    }
-
-    private static final class TrainingRunResult {
-        private final List<ObliviousTree> trees;
-        private final List<Double> losses;
-
-        private TrainingRunResult(List<ObliviousTree> trees, List<Double> losses) {
-            this.trees = trees;
-            this.losses = losses;
         }
     }
 }
